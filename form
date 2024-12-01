@@ -1,0 +1,600 @@
+Imports System
+Imports System.Windows.Forms
+Imports System.Drawing
+Imports System.IO
+Imports System.ComponentModel
+Imports System.Diagnostics
+Imports System.Runtime.InteropServices
+Imports System.Threading.Tasks
+Imports Excel = Microsoft.Office.Interop.Excel
+Imports System.Linq
+Imports System.Collections.Generic
+
+Namespace Malzeme_Kontrol_Formu
+    Public Class Form1
+        Inherits Form
+
+#Region "Constants and Fields"
+        Private ReadOnly BASE_PATH As String = "C:\Users\o\Desktop\test\form"
+        Private ReadOnly FORMS_FOLDER As String
+        Private ReadOnly TEMPLATE_ELK As String
+        Private ReadOnly TEMPLATE_MKN As String
+        Private isExcelProcessing As Boolean
+
+        ' Personel listeleri
+        Private ReadOnly ENGINEERS As String() = {
+            "Yekta Parlak", "deneme 1", "deneme 2",
+            "deneme 3", "deneme 4", "deneme 5"
+        }
+
+        Private ReadOnly TECHNICIANS As String() = {
+            "Mehmet Evren Gülüm", "Ömer Ünal", "Gökhan Polat",
+            "Muhammed Uçan", "Emin Tolga Sarıarslan", "Kezban Akgül",
+            "Emrah Daloğlu", "Derya Kartal", "Onat Demirer",
+            "Kadir Oğuz Aksakal", "Ersin Samsa", "Korcan Küçükateş"
+        }
+
+        Private ReadOnly folderCreationDates As New Dictionary(Of String, DateTime)
+        Private ReadOnly fileCreationDates As New Dictionary(Of String, DateTime)
+
+        ' Form controls
+        Private mainTabControl As TabControl
+        Private tabCreate As TabPage
+        Private tabList As TabPage
+        Private formPanel As Panel
+        Private formTypePanel As Panel
+        Private txtStockNo As TextBox
+        Private cmbEngineer As ComboBox
+        Private cmbTechnician As ComboBox
+        Private txtRevisionReason As TextBox
+        Private txtRevisionDetails As TextBox
+        Private rbElectronic As RadioButton
+        Private rbMechanic As RadioButton
+        Private btnCreate As Button
+        Private btnClear As Button
+        Private btnExit As Button
+        Private lblRevisionInfo As Label
+        Private lblCurrentDate As Label
+        Private dgvForms As DataGridView
+        Private txtSearch As TextBox
+        Private btnRefresh As Button
+        Private btnExport As Button
+        Private btnOpenFolder As Button
+        Private progressBar As ProgressBar
+        Private mainTableLayout As TableLayoutPanel
+        Private lblStatus As Label
+#End Region
+
+        Private Class FormData
+            Public Property [Date] As String
+            Public Property FormType As String
+            Public Property StockNo As String
+            Public Property Revision As String
+            Public Property FormName As String
+            Public Property RevisionReason As String
+            Public Property RevisionDetails As String
+            Public Property Priority As String
+            Public Property Responsible As String
+            Public Property User1 As String
+            Public Property User2 As String
+        End Class
+
+        Public Sub New()
+            InitializeComponent()
+
+            ' Yolları ayarla
+            FORMS_FOLDER = Path.Combine(BASE_PATH, "Kontrol Formu Listesi")
+            TEMPLATE_ELK = Path.Combine(BASE_PATH, "02_Elektronik_KKK_formu.xlsx")
+            TEMPLATE_MKN = Path.Combine(BASE_PATH, "03_Mekanik_KKK_formu.xlsx")
+
+            ' Form ayarları ve kontroller
+            SetupForm()
+            CreateFormControls()
+            SetupEventHandlers()
+        End Sub
+
+
+
+        Private Sub InitializeComponent()
+            Me.SuspendLayout()
+            Me.Name = "Form1"
+            Me.Text = "Kontrol Formu Oluştur (v4.0)"
+            Me.ResumeLayout(False)
+        End Sub
+
+        Private Sub SetupForm()
+            Me.Text = "Kontrol Formu Oluştur (v4.0)"
+            Me.Size = New Size(1280, 800)
+            Me.MinimumSize = New Size(1024, 768)
+            Me.StartPosition = FormStartPosition.CenterScreen
+            Me.WindowState = FormWindowState.Maximized
+        End Sub
+
+        Private Sub CreateFormControls()
+            ' TabControl oluşturma
+            mainTabControl = New TabControl With {
+                .Dock = DockStyle.Fill,
+                .Appearance = TabAppearance.Normal,
+                .ItemSize = New Size(250, 50),
+                .Font = New Font("Segoe UI Semibold", 11.0F)
+            }
+
+            ' Form oluşturma sekmesi
+            tabCreate = New TabPage With {
+                .Text = "ANA MENÜ",
+                .Padding = New Padding(20),
+                .BackColor = Color.White
+            }
+
+            ' Liste sekmesi
+            tabList = New TabPage With {
+                .Text = "FORM LİSTESİ",
+                .Padding = New Padding(20),
+                .BackColor = Color.White
+            }
+
+            mainTabControl.Controls.AddRange({tabCreate, tabList})
+            Me.Controls.Add(mainTabControl)
+
+            CreateFormInputs()
+            CreateListView()
+        End Sub
+
+        Private Sub CreateFormInputs()
+            ' Ana panel
+            formPanel = New Panel With {
+                .Dock = DockStyle.Left,
+                .Width = 400,
+                .Padding = New Padding(20),
+                .BackColor = Color.White
+            }
+
+            ' Form tipi seçimi için panel
+            formTypePanel = New Panel With {
+                .Height = 80,
+                .Dock = DockStyle.Top,
+                .Margin = New Padding(0, 0, 0, 10)
+            }
+
+            ' Radio butonlar
+            rbElectronic = New RadioButton With {
+                .Text = "Elektronik Form",
+                .Location = New Point(0, 10),
+                .Checked = True,
+                .AutoSize = True,
+                .Font = New Font("Segoe UI", 12.0F, FontStyle.Bold)
+            }
+
+            rbMechanic = New RadioButton With {
+                .Text = "Mekanik Form",
+                .Location = New Point(200, 10),
+                .AutoSize = True,
+                .Font = New Font("Segoe UI", 12.0F, FontStyle.Bold)
+            }
+
+            formTypePanel.Controls.AddRange({rbElectronic, rbMechanic})
+
+            ' Güncel tarih etiketi
+            lblCurrentDate = New Label With {
+                .Text = $"Tarih: {DateTime.Now:dd.MM.yyyy}",
+                .Dock = DockStyle.Top,
+                .Height = 30,
+                .TextAlign = ContentAlignment.MiddleLeft
+            }
+
+            ' Revizyon bilgi etiketi
+            lblRevisionInfo = New Label With {
+                .Dock = DockStyle.Top,
+                .Height = 30,
+                .TextAlign = ContentAlignment.MiddleLeft,
+                .ForeColor = Color.Red,
+                .Visible = False
+            }
+
+            ' Input kontrolleri
+            txtStockNo = New TextBox With {
+                .Dock = DockStyle.Top,
+                .Height = 30,
+                .Font = New Font("Segoe UI", 11.0F)
+            }
+
+            cmbEngineer = New ComboBox With {
+                .Dock = DockStyle.Top,
+                .Height = 30,
+                .DropDownStyle = ComboBoxStyle.DropDownList,
+                .Font = New Font("Segoe UI", 11.0F)
+            }
+            cmbEngineer.Items.AddRange(ENGINEERS)
+
+            cmbTechnician = New ComboBox With {
+                .Dock = DockStyle.Top,
+                .Height = 30,
+                .DropDownStyle = ComboBoxStyle.DropDownList,
+                .Font = New Font("Segoe UI", 11.0F)
+            }
+            cmbTechnician.Items.AddRange(TECHNICIANS)
+
+            ' Revizyon alanları
+            txtRevisionReason = New TextBox With {
+                .Dock = DockStyle.Top,
+                .Height = 100,
+                .Multiline = True,
+                .Font = New Font("Segoe UI", 11.0F),
+                .MaxLength = 500
+            }
+
+            txtRevisionDetails = New TextBox With {
+                .Dock = DockStyle.Top,
+                .Height = 150,
+                .Multiline = True,
+                .Font = New Font("Segoe UI", 11.0F),
+                .MaxLength = 1000
+            }
+
+            CreateFormButtons()
+
+            ' Kontrolleri panele ekle
+            formPanel.Controls.AddRange(New Control() {
+                txtRevisionDetails,
+                CreateSpacerPanel(10),
+                txtRevisionReason,
+                CreateSpacerPanel(10),
+                cmbTechnician,
+                CreateSpacerPanel(10),
+                cmbEngineer,
+                CreateSpacerPanel(10),
+                txtStockNo,
+                CreateSpacerPanel(10),
+                lblRevisionInfo,
+                CreateSpacerPanel(10),
+                lblCurrentDate,
+                CreateSpacerPanel(10),
+                formTypePanel
+            })
+
+            tabCreate.Controls.Add(formPanel)
+        End Sub
+
+
+
+        Private Sub CreateFormButtons()
+            ' Buton paneli
+            Dim buttonPanel As New TableLayoutPanel With {
+                .Dock = DockStyle.Bottom,
+                .Height = 50,
+                .ColumnCount = 3,
+                .RowCount = 1,
+                .Padding = New Padding(0),
+                .Margin = New Padding(0, 20, 0, 0)
+            }
+
+            buttonPanel.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 33.33F))
+            buttonPanel.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 33.33F))
+            buttonPanel.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 33.33F))
+
+            ' Butonlar
+            btnCreate = New Button With {
+                .Text = "Form Oluştur",
+                .Dock = DockStyle.Fill,
+                .BackColor = Color.FromArgb(100, 149, 237),
+                .ForeColor = Color.White,
+                .FlatStyle = FlatStyle.Flat,
+                .Margin = New Padding(5)
+            }
+
+            btnClear = New Button With {
+                .Text = "Temizle",
+                .Dock = DockStyle.Fill,
+                .FlatStyle = FlatStyle.Flat,
+                .Margin = New Padding(5)
+            }
+
+            btnExit = New Button With {
+                .Text = "Çıkış",
+                .Dock = DockStyle.Fill,
+                .FlatStyle = FlatStyle.Flat,
+                .Margin = New Padding(5)
+            }
+
+            buttonPanel.Controls.Add(btnExit, 0, 0)
+            buttonPanel.Controls.Add(btnClear, 1, 0)
+            buttonPanel.Controls.Add(btnCreate, 2, 0)
+            formPanel.Controls.Add(buttonPanel)
+        End Sub
+
+        Private Function CreateSpacerPanel(height As Integer) As Panel
+            Return New Panel With {
+                .Height = height,
+                .Dock = DockStyle.Top
+            }
+        End Function
+
+        Private Sub CreateListView()
+            mainTableLayout = New TableLayoutPanel With {
+                .Dock = DockStyle.Fill,
+                .ColumnCount = 1,
+                .RowCount = 3,
+                .Padding = New Padding(20),
+                .BackColor = Color.White
+            }
+
+            mainTableLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 80.0F))
+            mainTableLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+            mainTableLayout.RowStyles.Add(New RowStyle(SizeType.Absolute, 60.0F))
+
+            ' Üst araç çubuğu
+            Dim toolPanel As New Panel With {
+                .Dock = DockStyle.Fill,
+                .Padding = New Padding(10),
+                .BackColor = Color.White
+            }
+
+            Dim toolLayout As New FlowLayoutPanel With {
+                .Dock = DockStyle.Fill,
+                .FlowDirection = FlowDirection.LeftToRight,
+                .WrapContents = False,
+                .AutoSize = True,
+                .Padding = New Padding(5),
+                .Margin = New Padding(5)
+            }
+
+            ' Arama kutusu ve butonlar
+            txtSearch = New TextBox With {
+                .Width = 400,
+                .Height = 30,
+                .Font = New Font("Segoe UI", 12.0F)
+            }
+
+            btnRefresh = New Button With {
+                .Text = "Yenile",
+                .Width = 120,
+                .Margin = New Padding(10, 0, 0, 0),
+                .FlatStyle = FlatStyle.Flat
+            }
+
+            btnExport = New Button With {
+                .Text = "Listeyi Excel'e Aktar",
+                .Width = 140,
+                .Margin = New Padding(10, 0, 0, 0),
+                .FlatStyle = FlatStyle.Flat
+            }
+
+            btnOpenFolder = New Button With {
+                .Text = "Klasörü Aç",
+                .Width = 130,
+                .Margin = New Padding(10, 0, 0, 0),
+                .FlatStyle = FlatStyle.Flat
+            }
+
+            toolLayout.Controls.AddRange({txtSearch, btnRefresh, btnExport, btnOpenFolder})
+            toolPanel.Controls.Add(toolLayout)
+
+            ' DataGridView
+            dgvForms = New DataGridView With {
+                .Dock = DockStyle.Fill,
+                .BackgroundColor = Color.White,
+                .BorderStyle = BorderStyle.None,
+                .RowHeadersVisible = False,
+                .AllowUserToAddRows = False,
+                .AllowUserToDeleteRows = False,
+                .AllowUserToOrderColumns = True,
+                .SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                .AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells,
+                .MultiSelect = False,
+                .Font = New Font("Segoe UI", 9.5F)
+            }
+
+            SetupGridColumns()
+
+            ' Durum çubuğu
+            Dim statusPanel As New Panel With {
+                .Dock = DockStyle.Fill,
+                .Padding = New Padding(10, 5, 10, 5),
+                .BackColor = Color.White
+            }
+
+            lblStatus = New Label With {
+                .Text = "Hazır",
+                .Dock = DockStyle.Left,
+                .TextAlign = ContentAlignment.MiddleLeft,
+                .Font = New Font("Segoe UI", 12.0F, FontStyle.Bold)
+            }
+
+            progressBar = New ProgressBar With {
+                .Dock = DockStyle.Right,
+                .Width = 200,
+                .Height = 20,
+                .Style = ProgressBarStyle.Marquee,
+                .Visible = False
+            }
+
+            statusPanel.Controls.AddRange({lblStatus, progressBar})
+
+            ' Ana düzene ekle
+            mainTableLayout.Controls.Add(toolPanel, 0, 0)
+            mainTableLayout.Controls.Add(dgvForms, 0, 1)
+            mainTableLayout.Controls.Add(statusPanel, 0, 2)
+
+            tabList.Controls.Add(mainTableLayout)
+        End Sub
+
+
+
+
+        Private Sub SetupGridColumns()
+            With dgvForms
+                .Columns.AddRange(New DataGridViewColumn() {
+                    New DataGridViewTextBoxColumn With {
+                        .Name = "CreateDate",
+                        .HeaderText = "Tarih",
+                        .Width = 100,
+                        .DefaultCellStyle = New DataGridViewCellStyle With {
+                            .Format = "dd.MM.yyyy"
+                        },
+                        .ReadOnly = True,
+                        .SortMode = DataGridViewColumnSortMode.NotSortable
+                    },
+                    New DataGridViewTextBoxColumn With {
+                        .Name = "FormType",
+                        .HeaderText = "Tip",
+                        .Width = 80,
+                        .ReadOnly = True,
+                        .SortMode = DataGridViewColumnSortMode.NotSortable
+                    },
+                    New DataGridViewTextBoxColumn With {
+                        .Name = "StockNo",
+                        .HeaderText = "Stok No",
+                        .Width = 150,
+                        .ReadOnly = True,
+                        .SortMode = DataGridViewColumnSortMode.NotSortable
+                    },
+                    New DataGridViewTextBoxColumn With {
+                        .Name = "RevNo",
+                        .HeaderText = "Rev. No",
+                        .Width = 80,
+                        .ReadOnly = True,
+                        .SortMode = DataGridViewColumnSortMode.NotSortable
+                    },
+                    New DataGridViewTextBoxColumn With {
+                        .Name = "Engineer",
+                        .HeaderText = "Hazırlayan",
+                        .Width = 150,
+                        .ReadOnly = True,
+                        .SortMode = DataGridViewColumnSortMode.NotSortable
+                    },
+                    New DataGridViewTextBoxColumn With {
+                        .Name = "Technician",
+                        .HeaderText = "Kontrol Eden",
+                        .Width = 150,
+                        .ReadOnly = True,
+                        .SortMode = DataGridViewColumnSortMode.NotSortable
+                    },
+                    New DataGridViewTextBoxColumn With {
+                        .Name = "RevisionReason",
+                        .HeaderText = "Revizyon Nedeni",
+                        .Width = 200,
+                        .ReadOnly = True,
+                        .SortMode = DataGridViewColumnSortMode.NotSortable
+                    },
+                    New DataGridViewTextBoxColumn With {
+                        .Name = "RevisionDetails",
+                        .HeaderText = "Revizyon Açıklaması",
+                        .Width = 250,
+                        .ReadOnly = True,
+                        .SortMode = DataGridViewColumnSortMode.NotSortable
+                    },
+                    New DataGridViewButtonColumn With {
+                        .Name = "OpenFile",
+                        .HeaderText = "İşlem",
+                        .Text = "Aç",
+                        .UseColumnTextForButtonValue = True,
+                        .Width = 80,
+                        .ReadOnly = True,
+                        .SortMode = DataGridViewColumnSortMode.NotSortable
+                    }
+                })
+
+                ' Grid stilleri
+                .EnableHeadersVisualStyles = False
+                .ColumnHeadersDefaultCellStyle = New DataGridViewCellStyle With {
+                    .BackColor = Color.RoyalBlue,
+                    .ForeColor = Color.White,
+                    .Font = New Font("Segoe UI Semibold", 10.0F),
+                    .Alignment = DataGridViewContentAlignment.MiddleLeft,
+                    .Padding = New Padding(10, 8, 8, 8)
+                }
+            End With
+        End Sub
+
+        Private Sub SetupEventHandlers()
+            AddHandler btnCreate.Click, AddressOf CreateFormAsync
+            AddHandler btnClear.Click, AddressOf ClearForm
+            AddHandler btnExit.Click, AddressOf CloseForm
+            AddHandler btnRefresh.Click, AddressOf LoadFormsAsync
+            AddHandler btnExport.Click, AddressOf ExportToExcelAsync
+            AddHandler btnOpenFolder.Click, AddressOf OpenSelectedStockFolder
+            AddHandler txtSearch.TextChanged, AddressOf FilterForms
+            AddHandler rbElectronic.CheckedChanged, AddressOf CheckRevisionStatus
+            AddHandler rbMechanic.CheckedChanged, AddressOf CheckRevisionStatus
+            AddHandler txtStockNo.TextChanged, AddressOf TxtStockNo_TextChanged
+            AddHandler dgvForms.CellClick, AddressOf DgvForms_CellClick
+            AddHandler dgvForms.CellMouseEnter, AddressOf DgvForms_CellMouseEnter
+            AddHandler Me.Load, AddressOf Form1_Load
+            AddHandler Me.Resize, AddressOf AdjustColumnWidths
+        End Sub
+
+        Private Sub CheckRevisionStatus(sender As Object, e As EventArgs)
+            Try
+                Dim stockNo As String = txtStockNo.Text.Trim()
+                If String.IsNullOrEmpty(stockNo) Then
+                    lblRevisionInfo.Visible = False
+                    Return
+                End If
+
+                Dim formType As String = If(rbElectronic.Checked, "ELK", "MKN")
+                Dim folder As String = Path.Combine(FORMS_FOLDER, stockNo)
+
+                If Directory.Exists(folder) Then
+                    Dim revCount = Directory.GetFiles(folder, $"{formType}_{stockNo}_Rev*.xlsx").Count
+                    If revCount > 0 Then
+                        lblRevisionInfo.Text = $"Bu stok numarası için {revCount} adet revizyon mevcut"
+                        lblRevisionInfo.Visible = True
+                    Else
+                        lblRevisionInfo.Visible = False
+                    End If
+                Else
+                    lblRevisionInfo.Visible = False
+                End If
+            Catch ex As Exception
+                lblRevisionInfo.Visible = False
+            End Try
+        End Sub
+
+        Private Sub TxtStockNo_TextChanged(sender As Object, e As EventArgs)
+            CheckRevisionStatus(sender, e)
+        End Sub
+
+        Private Sub OpenExcelFile(rowIndex As Integer)
+            Try
+                If rowIndex < 0 OrElse rowIndex >= dgvForms.Rows.Count Then Return
+
+                Dim stockNo As String = dgvForms.Rows(rowIndex).Cells("StockNo").Value.ToString()
+                Dim formType As String = dgvForms.Rows(rowIndex).Cells("FormType").Value.ToString()
+                Dim revNo As String = dgvForms.Rows(rowIndex).Cells("RevNo").Value.ToString()
+
+                Dim filePath As String = Path.Combine(FORMS_FOLDER, stockNo, $"{formType}_{stockNo}_{revNo}.xlsx")
+
+                If File.Exists(filePath) Then
+                    Process.Start(filePath)
+                    UpdateStatus($"{Path.GetFileName(filePath)} açıldı")
+                Else
+                    MessageBox.Show("Dosya bulunamadı.", "Hata")
+                    UpdateStatus("Dosya bulunamadı", True)
+                End If
+            Catch ex As Exception
+                MessageBox.Show($"Dosya açılırken hata oluştu:{vbCrLf}{vbCrLf}{ex.Message}", "Hata")
+                UpdateStatus("Hata oluştu", True)
+            End Try
+        End Sub
+
+        ' Form kapanış kontrolü
+        Protected Overrides Sub OnClosing(e As CancelEventArgs)
+            If isExcelProcessing Then
+                Dim result As DialogResult = MessageBox.Show(
+                    "Excel işlemi devam ediyor. Çıkmak istediğinizden emin misiniz?",
+                    "Uyarı",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning)
+
+                If result = DialogResult.No Then
+                    e.Cancel = True
+                    Return
+                End If
+            End If
+
+            MyBase.OnClosing(e)
+        End Sub
+
+    End Class
+End Namespace
+
